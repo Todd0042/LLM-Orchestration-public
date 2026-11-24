@@ -1,0 +1,15 @@
+# Example: a Cloudflare Tunnel that publishes the orchestrator's tunnel-only listener (127.0.0.1:8791).
+# Sign-in with the 6-digit code is always required on this listener. Put the host name in
+# LLM_ORCH_PUBLIC_HOSTS. Install: copy to ~/.config/systemd/user/, then systemctl --user enable --now.
+[Unit]
+Description=Cloudflare tunnel for the orchestrator -> 127.0.0.1:8791 (tunnel-only listener, code login required)
+After=network-online.target llm-orchestration.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --config %h/.cloudflared/orchestrator.yml run orchestrator
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,17 @@
+node_modules/
+dist/
+src-tauri/target/
+__pycache__/
+*.pyc
+.DS_Store
+*.log
+*.tsbuildinfo
+test-results/
+playwright-report/
+
+# this machine's settings (copy llm-orchestration.env.example)
+llm-orchestration.env
+.env
+.env.*
+*.pem
+*.key

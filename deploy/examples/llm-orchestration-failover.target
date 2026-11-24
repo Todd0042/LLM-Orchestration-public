@@ -1,0 +1,5 @@
+# Example: what the standby machine starts while the primary is down (LLM-Orchestration starts and stops
+# it; set LLM_ORCH_FAILOVER_UNIT to this unit's name). Each wanted unit is a second tunnel connector.
+[Unit]
+Description=Standby: serve the sites and the orchestrator from this machine while the primary is down
+Wants=failover-sites-tunnel.service failover-orchestrator-tunnel.service

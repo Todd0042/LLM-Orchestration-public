@@ -1,0 +1,14 @@
+{
+  "name": "LLM-Orchestration",
+  "short_name": "LLM-Orch",
+  "description": "Your orchestrator, repos and sites across both machines",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0e14",
+  "theme_color": "#111621",
+  "icons": [
+    { "src": "/icons/icon-128.png", "sizes": "128x128", "type": "image/png" },
+    { "src": "/icons/icon-256.png", "sizes": "256x256", "type": "image/png", "purpose": "any" }
+  ]
+}

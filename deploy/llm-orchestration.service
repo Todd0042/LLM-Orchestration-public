@@ -1,0 +1,16 @@
+[Unit]
+Description=LLM-Orchestration node daemon (main :8790, tunnel-only 127.0.0.1:8791, maintenance 127.0.0.1:8792)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Repo path differs per machine; scripts/install.sh fills it in.
+WorkingDirectory=@REPO_DIR@
+ExecStart=%h/.local/share/llm-orchestration/venv/bin/python -m server.app
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

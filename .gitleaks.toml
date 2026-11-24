@@ -1,0 +1,9 @@
+# gitleaks settings for this repo (used by bin/export-public's leak check).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Well-known test values, not secrets"
+regexes = [
+  '''JBSWY3DPEHPK3PXP''',   # the RFC 6238 / Google Authenticator example secret used by the tests
+]

@@ -1,0 +1,8 @@
+[Unit]
+Description=Failover connector for the orchestrator tunnel: the orchestrator stays reachable through this machine
+PartOf=llm-orchestration-failover.target
+
+[Service]
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --config %h/.cloudflared/failover-orchestrator.yml run
+Restart=on-failure
+RestartSec=5

@@ -1,0 +1,8 @@
+[Unit]
+Description=Failover connector for the sites tunnel: every site shows a "back soon" page from this machine
+PartOf=llm-orchestration-failover.target
+
+[Service]
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --config %h/.cloudflared/failover-sites.yml run
+Restart=on-failure
+RestartSec=5

@@ -1,0 +1,37 @@
+[
+  {
+    "id": "notes-app",
+    "name": "Notes app (blue/green)",
+    "node": "desktop",
+    "publicHost": "notes.example.com",
+    "units": ["notes-blue.service", "notes-green.service"],
+    "restartOrder": ["notes-blue.service", "notes-green.service"],
+    "health": {"url": "http://127.0.0.1:8100/api/health"},
+    "backup": {"sqlite": ["~/apps/notes/data/notes.db"]},
+    "failover": {"mode": "maintenance"}
+  },
+  {
+    "id": "shop",
+    "name": "Shop (Docker Compose)",
+    "node": "desktop",
+    "publicHost": "shop.example.com",
+    "container": "shop-web",
+    "compose": {"dir": "~/apps/shop", "service": "web"},
+    "health": {"url": "http://127.0.0.1:8200/health", "okCodes": [200, 204]},
+    "backup": {"sqlite": ["~/apps/shop/data/shop.db"]},
+    "failover": {"mode": "maintenance"}
+  },
+  {
+    "id": "ollama",
+    "name": "Ollama",
+    "node": "desktop",
+    "units": ["ollama.service"],
+    "health": {"url": "http://127.0.0.1:11434/api/tags"}
+  },
+  {
+    "id": "orchestrator-tunnel",
+    "name": "Cloudflare tunnel (orchestrator)",
+    "node": "desktop",
+    "units": ["orchestrator-tunnel.service"]
+  }
+]
