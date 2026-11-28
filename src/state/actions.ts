@@ -278,6 +278,9 @@ export function handleEvent(raw: OrchEvent): void {
       void reloadChat(chatId).catch(() => null);
       void refreshChats();
       break;
+    case "orch_card":
+      setState((s) => ({ orchTick: s.orchTick + 1 }));
+      return;
     case "chats_changed":
     case "replicated":
       void refreshChats();

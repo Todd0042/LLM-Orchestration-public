@@ -290,6 +290,59 @@ def scenario_agents(c: Cluster) -> None:
     d.start()
 
 
+def scenario_remote_commands(c: Cluster) -> None:
+    print("\n== Commands on the other machine run in its own copy of the folder ==")
+    d, l = c.desktop, c.laptop  # desktop repos: ~/Documents/GitHub, laptop repos: ~/GitHub (as on the real machines)
+    for node in (d, l):
+        (node.github / "webapp" / "src" / "api").mkdir(parents=True, exist_ok=True)
+    for a in (d, l):  # an earlier scenario may have restarted a node; wait until each sees the other again
+        wait_until(lambda: all(p["online"] for p in a.get("/api/nodes").json()["peers"]), timeout=20, label=f"{a.name} sees its peer")
+
+    def remote(src, target: str, cwd: str, command: str = "pwd") -> httpx.Response:
+        return src.post("/api/terminal/run", {"command": command, "cwd": cwd, "nodeId": target}, timeout=60)
+
+    r = remote(d, "laptop", str(d.github / "webapp"))
+    check(r.status_code == 200 and r.json()["exitCode"] == 0 and r.json()["output"].strip() == str(l.github / "webapp"),
+          f"a desktop repo path runs in the laptop's copy ({r.status_code} {r.text[:200]})")
+    r = remote(l, "desktop", str(l.github / "webapp" / "src" / "api"), "git rev-parse --show-toplevel; pwd")
+    out = r.json().get("output", "").split() if r.status_code == 200 else []
+    check(out == [str(d.github / "webapp"), str(d.github / "webapp" / "src" / "api")],
+          f"a nested laptop path maps to the same folder inside the desktop's repo ({r.status_code} {r.text[:200]})")
+    r = remote(d, "laptop", str(d.github))
+    check(r.status_code == 200 and r.json()["output"].strip() == str(l.github), "the GitHub folder itself maps to the other's GitHub folder")
+    r = remote(d, "laptop", "")
+    check(r.status_code == 200 and r.json()["output"].strip() == str(l.home), "no folder runs in the other machine's home")
+
+    (d.github / "desk-only").mkdir(exist_ok=True)
+    r = remote(d, "laptop", str(d.github / "desk-only"), "touch should-not-exist")
+    check(r.status_code == 503 and "No folder" in r.text and str(l.github / "desk-only") in r.text,
+          f"a repo the other machine doesn't have fails clearly, naming the missing folder ({r.status_code} {r.text[:200]})")
+    r = remote(l, "local", str(l.home / "nowhere"), "touch should-not-exist")
+    check(r.status_code == 400 and "No folder" in r.text, "a missing folder on this machine is a clear 400, not a crash")
+    check(not list(l.home.rglob("should-not-exist")) and not list(d.home.rglob("should-not-exist")), "nothing ran when the folder was missing")
+
+    # The path that crashed the real laptop: an agent's orch_run_command (bridge, no cwd -> the desktop's GitHub folder).
+    env = {**os.environ, "LLM_ORCH_CONFIG_DIR": str(d.cfg), "LLM_ORCH_URL": d.url, "HOME": str(d.home)}
+    bridge = subprocess.Popen([sys.executable, str(ROOT / "server" / "mcp_bridge.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
+    try:
+        def rpc(i: int, method: str, params: dict) -> dict:
+            bridge.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params}) + "\n")
+            bridge.stdin.flush()
+            return json.loads(bridge.stdout.readline())
+
+        rpc(1, "tools/list", {})
+        out = json.loads(rpc(2, "tools/call", {"name": "orch_run_command", "arguments": {"command": "pwd", "targetNode": "laptop"}})["result"]["content"][0]["text"])
+        check(out.get("exitCode") == 0 and out.get("output", "").strip() == str(l.github),
+              f"an agent's read-only command on the laptop runs in the laptop's GitHub folder ({out})")
+        out = json.loads(rpc(3, "tools/call", {"name": "orch_run_command", "arguments": {
+            "command": "git rev-parse --show-toplevel", "targetNode": "laptop", "cwd": str(d.github / "webapp" / "src")}})["result"]["content"][0]["text"])
+        check(out.get("exitCode") == 0 and out.get("output", "").strip() == str(l.github / "webapp"),
+              f"an agent's repo path is mapped to the laptop's repo ({out})")
+    finally:
+        bridge.kill()
+    check("Exception in ASGI" not in l.log.read_text() and "Exception in ASGI" not in d.log.read_text(), "neither server logged a crash")
+
+
 # ---------------------------------------------------------------------------------------------------
 def scenario_watchdog(c: Cluster) -> None:
     print("\n== Watchdog: threshold, backoff, give up + alert, recovery; backups to the other machine ==")
@@ -553,7 +606,7 @@ def scenario_usage_handoff(c: Cluster) -> None:
 
 
 SCENARIOS = {"usage_handoff": scenario_usage_handoff, "agent_orchestrator": scenario_agent_orchestrator, "devices": scenario_devices, "sudo": scenario_sudo, "security": scenario_security, "orchestrator": scenario_orchestrator, "handoff": scenario_handoff,
-             "replication": scenario_replication, "agents": scenario_agents, "watchdog": scenario_watchdog, "failover": scenario_failover}
+             "replication": scenario_replication, "agents": scenario_agents, "remote_commands": scenario_remote_commands, "watchdog": scenario_watchdog, "failover": scenario_failover}
 
 
 def main() -> int:
@@ -561,7 +614,7 @@ def main() -> int:
     c = Cluster(keep="--keep" in wanted)
     wanted = [w for w in wanted if w != "--keep"]
     c.configure()
-    if "agents" in wanted and "handoff" not in wanted:
+    if {"agents", "remote_commands"} & set(wanted) and "handoff" not in wanted:
         c.make_repo("webapp")
     c.start()
     try:

@@ -79,7 +79,7 @@ def default_settings() -> dict[str, Any]:
         or Path("/sys/class/power_supply/BAT1").exists()
     )
     node_id = os.environ.get("LLM_ORCH_NODE_ID") or ("laptop" if is_laptop else "desktop")
-    role = os.environ.get("LLM_ORCH_ROLE") or ("hub" if node_id == "laptop" else "worker")
+    role = os.environ.get("LLM_ORCH_ROLE") or ("worker" if node_id == "laptop" else "hub")  # the always-on machine is the hub
     return {
         "node": {
             "id": node_id,
@@ -135,6 +135,9 @@ def default_settings() -> dict[str, Any]:
         "monitor": {"intervalSec": 30, "failThreshold": 3, "maxRestartsPerHour": 4, "backoffBaseSec": 60, "backoffMaxSec": 1800},
         "backups": {"targetNode": "", "intervalSec": 21600, "keep": 14},
         "replication": {"intervalSec": 20},
+        # The orchestrator card's Claude / AGY / local terminals (server/orch_terminal.py).
+        "orchTerminal": {"detachWithSystemd": True, "localModel": "", "idleAfterSec": 3, "claudeStaleBusySec": 15, "handoffUpdateTimeoutSec": 900,
+                         "commands": {}, "interruptKeys": {}},
         "repoSync": {"autoHandoff": True, "pushWipToGitHub": True},
         "services": [],
         "auth": {
@@ -381,7 +384,7 @@ def load_settings(settings_file: Path = SETTINGS_FILE) -> dict[str, Any]:
         return base
     try:
         saved = json.loads(settings_file.read_text(encoding="utf-8"))
-        for k in ("node", "paths", "auth", "engines", "terminal", "taskDefaults", "security", "alerts", "failover", "monitor", "backups", "replication", "repoSync"):
+        for k in ("node", "paths", "auth", "engines", "terminal", "taskDefaults", "security", "alerts", "failover", "monitor", "backups", "replication", "repoSync", "orchTerminal"):
             if isinstance(saved.get(k), dict):
                 if k in ("taskDefaults", "engines"):
                     for tk, tv in saved[k].items():

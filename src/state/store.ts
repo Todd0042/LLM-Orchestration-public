@@ -74,6 +74,10 @@ export interface AppState {
   passwordQueue: PasswordPromptEvent[];
   toast: { text: string; tone: "info" | "error" } | null;
   textScale: number;
+  /** Bumped by `orch_card` events so the agent cards refetch. */
+  orchTick: number;
+  /** The orchestrator pane: the agent terminals, or the old chat until the switch-over. */
+  orchMode: "terminals" | "chat";
 }
 
 const initial: AppState = {
@@ -106,6 +110,8 @@ const initial: AppState = {
   passwordQueue: [],
   toast: null,
   textScale: Number(localStorage.getItem("orch.textScale") || "1") || 1,
+  orchTick: 0,
+  orchMode: localStorage.getItem("orch.mode") === "chat" ? "chat" : "terminals",
 };
 
 type Listener = () => void;

@@ -161,9 +161,89 @@ class StatusServer:
         return f"http://127.0.0.1:{self.port}/health"
 
 
+# Interactive mode shared by the fake claude/agy/opencode: a prompt, one line in, an answer out, like
+# the real TUIs running in the orchestrator's tmux terminals. Every received line is logged to
+# $FAKE_STATE/<agent>.lines so tests can prove what reached which terminal.
+FAKE_TUI = r'''
+def run_tui(agent, banner, hooks_file=""):
+    import signal, subprocess, time
+    state = os.environ["FAKE_STATE"]
+    hooks = json.load(open(hooks_file)).get("hooks", {}) if hooks_file else {}
+
+    def hook(event):
+        for group in hooks.get(event, []):
+            for h in group.get("hooks", []):
+                subprocess.run(h["command"], shell=True, input=json.dumps({"hook_event_name": event}), text=True)
+
+    def interrupted(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGINT, interrupted)
+    with open(os.path.join(state, f"{agent}-tui.log"), "a") as fh:
+        fh.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "env": {k: v for k, v in os.environ.items() if k.startswith(("GIT_CONFIG", "OPENCODE", "ORCH_"))}}) + "\n")
+    print(banner, flush=True)
+    hook("SessionStart")
+    while True:
+        sys.stdout.write(f"{agent}> ")
+        sys.stdout.flush()
+        try:
+            line = sys.stdin.readline()
+        except KeyboardInterrupt:
+            print("^C", flush=True)
+            continue
+        if not line:
+            return
+        line = line.strip()
+        if not line:
+            continue
+        with open(os.path.join(state, f"{agent}.lines"), "a") as fh:
+            fh.write(line + "\n")
+        if line == "/exit":
+            return
+        hook("UserPromptSubmit")
+        try:
+            word, _, rest = line.partition(" ")
+            if word == "ECHO":
+                print(rest, flush=True)
+            elif word == "SLOW":
+                for _ in range(int(float(rest) * 4)):
+                    print(".", end="", flush=True)
+                    time.sleep(0.25)
+                print(" done", flush=True)
+            elif word == "LIMIT":
+                print("You've hit your limit · resets 9pm (America/New_York)", flush=True)
+            elif word in ("COMMIT", "COMMIT_ON"):
+                branch, _, msg = rest.partition(" ") if word == "COMMIT_ON" else ("", "", rest)
+                if branch:
+                    subprocess.run(["git", "checkout", "-q", branch])
+                open(f"{agent}-{len(msg)}.txt", "w").write(msg + "\n")
+                subprocess.run(["git", "add", "-A"])
+                p = subprocess.run(["git", "commit", "-q", "-m", msg], capture_output=True, text=True)
+                print(p.stdout + p.stderr + f"commit exit={p.returncode}", flush=True)
+                if branch:
+                    subprocess.run(["git", "checkout", "-q", "-"])
+            elif "Update .orch/context.md" in line:
+                with open(".orch/context.md", "a") as fh:
+                    fh.write(f"- {agent} updated the context before handing off\n")
+                print("context updated", flush=True)
+            elif line.startswith("Taking over"):
+                branch = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+                print(f"read .orch/context.md; on branch {branch}", flush=True)
+            else:
+                print(f"{agent} heard: {line}", flush=True)
+        except KeyboardInterrupt:
+            print("^C interrupted", flush=True)
+        hook("Stop")
+'''
+
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]
+''' + FAKE_TUI + r'''
+if "-p" not in args:
+    sid = args[args.index("--resume") + 1] if "--resume" in args else args[args.index("--session-id") + 1] if "--session-id" in args else ""
+    run_tui("claude", f"fake-claude {'resumed' if '--resume' in args else 'started'} session {sid} in {os.getcwd()}",
+            args[args.index("--settings") + 1] if "--settings" in args else "")
+    sys.exit(0)
 # Like the real CLI: --mcp-config takes one or more values, so a prompt placed after it is
 # swallowed as a config path. The prompt must come right after -p.
 if "--mcp-config" in args:
@@ -193,6 +273,10 @@ print(json.dumps({"type": "result", "result": f"claude ran in {os.getcwd()}", "s
 FAKE_AGY = r'''#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]
+''' + FAKE_TUI + r'''
+if not any(a.startswith("-p") for a in args):
+    run_tui("agy", f"fake-agy {'continued' if '--continue' in args or '-c' in args else 'started'} in {os.getcwd()}")
+    sys.exit(0)
 prompt = next((a[3:] for a in args if a.startswith("-p=")), "")
 state = os.environ["FAKE_STATE"]
 with open(os.path.join(state, "agy.log"), "a") as fh:
@@ -203,6 +287,16 @@ if os.path.exists(os.path.join(state, "agy.limit")):
 print(json.dumps({"event": "init", "conversation_id": "agy-conv-1"}))
 print(json.dumps({"event": "step_update", "step_update": {"text_delta": f"agy ran in {os.getcwd()}"}}))
 print(json.dumps({"event": "result", "result": {"response": f"agy ran in {os.getcwd()}", "conversation_id": "agy-conv-1"}}))
+'''
+
+FAKE_OPENCODE = r'''#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+''' + FAKE_TUI + r'''
+if "--help" in args:
+    print("Usage: opencode [project]\n  --auto  auto-approve permissions\n  -c, --continue  continue the last session")
+    sys.exit(0)
+run_tui("opencode", f"fake-opencode config {os.environ.get('OPENCODE_CONFIG', '')} in {os.getcwd()}")
 '''
 
 FAKE_SYSTEMCTL = r'''#!/usr/bin/env bash
@@ -248,7 +342,8 @@ class Node:
         os.chmod(self.cfg / "node_token", 0o600)
         (self.home / ".local/share/llm-orchestration-totp").mkdir(parents=True, exist_ok=True)
         (self.home / ".local/share/llm-orchestration-totp/totp_secret").write_text(TOTP_SECRET)
-        for name_, body in (("claude", FAKE_CLAUDE), ("agy", FAKE_AGY), ("systemctl", FAKE_SYSTEMCTL), ("docker", FAKE_DOCKER)):
+        for name_, body in (("claude", FAKE_CLAUDE), ("agy", FAKE_AGY), ("opencode", FAKE_OPENCODE), ("systemctl", FAKE_SYSTEMCTL),
+                            ("docker", FAKE_DOCKER)):
             f = self.bin / name_
             f.write_text(body)
             f.chmod(0o755)
@@ -365,6 +460,11 @@ class Cluster:
 
     def stop(self) -> None:
         for n in (self.desktop, self.laptop):
+            # Orchestrator terminals outlive server restarts by design; a finished test run ends them
+            # first (quick), so a caller that can't wait for the servers to stop doesn't leak them.
+            sock = n.data / "runtime" / "orch-tmux.sock"
+            if sock.exists():
+                subprocess.run(["tmux", "-S", str(sock), "kill-server"], capture_output=True)
             n.stop()
         if not self.keep and not failures:
             shutil.rmtree(self.tmp, ignore_errors=True)

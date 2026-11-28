@@ -361,14 +361,18 @@ export async function buildMediaUrl(path: string, fileNode = "local"): Promise<s
   return `${base}/api/media?${signed.query}`;
 }
 
-/** WebSocket URL with a one-time ticket (the node token never goes in a URL). */
-export async function eventStreamUrl(): Promise<string> {
+/** WebSocket URL for `path` with a one-time ticket (the node token never goes in a URL). */
+export async function ticketedWsUrl(path: string): Promise<string> {
   const base = await getApiBase();
   const wsBase = base
     ? base.replace(/^http/, "ws")
     : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
   const { ticket } = await apiJson<{ ticket: string }>("/api/ws/ticket", { method: "POST" });
-  return `${wsBase}/ws/events?ticket=${encodeURIComponent(ticket)}`;
+  return `${wsBase}${path}?ticket=${encodeURIComponent(ticket)}`;
+}
+
+export function eventStreamUrl(): Promise<string> {
+  return ticketedWsUrl("/ws/events");
 }
 
 // ---- Background jobs -------------------------------------------------------------------------

@@ -58,11 +58,14 @@ def build(ctx) -> APIRouter:
     async def run_terminal(body: TerminalRunBody, request: Request) -> dict[str, Any]:
         if not ctx.nodes.is_local(body.nodeId):
             try:
+                cwd = await ctx.nodes.path_for_peer(body.nodeId, body.cwd.strip())
                 return await ctx.nodes.json(body.nodeId, "POST", "/api/terminal/run", timeout=900.0,
-                                            json={"command": body.command, "cwd": body.cwd, "nodeId": "local", "chatId": body.chatId})
+                                            json={"command": body.command, "cwd": cwd, "nodeId": "local", "chatId": body.chatId})
             except Exception as exc:
                 raise HTTPException(503, f"{body.nodeId}: {exc}")
-        cwd = body.cwd.strip() or str(Path.home())
+        cwd = str(Path(body.cwd.strip()).expanduser()) if body.cwd.strip() else str(Path.home())
+        if not Path(cwd).is_dir():
+            raise HTTPException(400, f"No folder {cwd} on {ctx.nodes.local_id}")
         repo = ctx.repo_sync.repo_from_path(cwd)
         if repo:
             await ctx.repo_sync.preflight(repo=repo, source="terminal")

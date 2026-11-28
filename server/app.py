@@ -23,11 +23,13 @@ from .config import CONFIG_DIR, DATA_DIR, ROOT_DIR, load_settings
 from .context import AppContext
 from .monitor import MAINTENANCE_HTML
 from .routes import register_routes
+from .routes._common import websocket_zone
 from .security import CLIENT_HEADER, STATE_CHANGING
 
 DIST_DIR = ROOT_DIR / "dist"
 PUBLIC_STATIC = {"icons", "manifest.webmanifest", "favicon.ico"}
-PUBLIC_API = {"/api/auth/status", "/api/auth/login", "/api/auth/logout", "/api/health",
+# The orchestrator terminals' hook checks its own per-card secret (server/orch_terminal.py).
+PUBLIC_API = {"/api/orch-terminal/hook", "/api/auth/status", "/api/auth/login", "/api/auth/logout", "/api/health",
               "/api/auth/passkey/login/options", "/api/auth/passkey/login/verify", "/api/auth/pair/redeem"}
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
        "media-src 'self' blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -111,18 +113,7 @@ def create_app(
 
     @app.websocket("/ws/events")
     async def ws_events(ws: WebSocket) -> None:
-        policy = ctx.policy
-        host = ws.headers.get("host", "")
-        origin = ws.headers.get("origin", "")
-        if not policy.host_ok(host) or (origin and not policy.origin_ok(origin, host, "https" if ws.url.scheme == "wss" else "http")):
-            await ws.close(code=1008)
-            return
-        zone = policy.zone_for(ws.scope.get("server"), ws.client.host if ws.client else "", ws.headers)
-        session_ok = ctx.sessions.get(ws.cookies.get(SESSION_COOKIE_NAME, "")) is not None
-        ticket_ok = ctx.tickets.redeem(ws.query_params.get("ticket", ""))
-        token_ok = zone != "tunnel" and _token_ok(ws.headers.get("x-node-token", ""))
-        everywhere = bool((ctx.settings().get("auth") or {}).get("requireAuthEverywhere"))
-        if not (session_ok or ticket_ok or token_ok or (zone == "local" and not everywhere)):
+        if websocket_zone(ctx, ws) is None:
             await ws.close(code=1008)
             return
         await ws.accept()

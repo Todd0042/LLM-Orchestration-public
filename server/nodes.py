@@ -25,6 +25,17 @@ def peer_urls(peer: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(str(u).rstrip("/") for u in urls if u))
 
 
+def map_path(path: str, from_root: str, to_root: str) -> str:
+    """Translate a path under one node's GitHub dir to the same repo path under another's."""
+    if not path or not from_root or not to_root:
+        return path
+    try:
+        rel = Path(path).expanduser().resolve().relative_to(Path(from_root).expanduser().resolve())
+    except (ValueError, OSError):
+        return path
+    return str(Path(to_root) / rel)
+
+
 class PeerOffline(RuntimeError):
     def __init__(self, peer_id: str):
         super().__init__(f"Node '{peer_id}' is offline or unreachable")
@@ -123,6 +134,25 @@ class NodeRegistry:
         if r.status_code >= 400:
             raise RuntimeError(f"{pid} {path} -> HTTP {r.status_code}: {r.text[:300]}")
         return r.json()
+
+    # ---- paths across nodes -------------------------------------------------------------------
+    async def peer_github_dir(self, pid: str) -> str:
+        """The peer's GitHub dir, fetching its profile if none has arrived yet (they refresh once a minute)."""
+        found = (self.profiles.get(pid) or {}).get("githubDir") or (self.peer(pid) or {}).get("githubDir")
+        if not found:
+            try:
+                self.profiles[pid] = await self.json(pid, "GET", "/api/node/profile", timeout=10.0)
+            except Exception:
+                return ""
+            found = self.profiles[pid].get("githubDir")
+        return str(found or "")
+
+    async def path_for_peer(self, pid: str, path: str) -> str:
+        """A path on this node, as the same place on `pid` (repos live under each node's own GitHub dir)."""
+        if not path:
+            return path
+        local_root = str(self.get_settings()["paths"].get("githubDir") or "")
+        return map_path(path, local_root, await self.peer_github_dir(pid))
 
 
 # ---- Local capability profile ----------------------------------------------------------------------

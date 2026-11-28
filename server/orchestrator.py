@@ -470,7 +470,8 @@ class Orchestrator:
         ctx.audit.record("model_command", cmd, zone=zone, node=target, cwd=cwd, readOnly=read_only)
         if target != ctx.nodes.local_id:
             try:
-                data = await ctx.nodes.json(target, "POST", "/api/terminal/run", json={"command": cmd, "cwd": cwd or "", "nodeId": "local"}, timeout=300.0)
+                remote_cwd = await ctx.nodes.path_for_peer(target, cwd or "")
+                data = await ctx.nodes.json(target, "POST", "/api/terminal/run", json={"command": cmd, "cwd": remote_cwd, "nodeId": "local"}, timeout=300.0)
             except Exception as exc:
                 return {"executedNode": target, "exitCode": 1, "output": "", "error": str(exc)}
             data["executedNode"] = target

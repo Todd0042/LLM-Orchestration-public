@@ -154,6 +154,21 @@ CREATE TABLE IF NOT EXISTS device_sessions (
         + _seq_triggers("passkeys")
         + _seq_triggers("device_sessions"),
     ),
+    (
+        7,
+        """
+CREATE TABLE IF NOT EXISTS orch_cards (
+  id TEXT PRIMARY KEY,
+  repo TEXT NOT NULL UNIQUE,
+  workdir TEXT NOT NULL,
+  holder TEXT NOT NULL,
+  claude_session TEXT NOT NULL,
+  hook_secret TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
+""",
+    ),
 ]
 
 

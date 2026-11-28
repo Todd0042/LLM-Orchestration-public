@@ -195,6 +195,8 @@ PROTECTED_PATHS = (
     ("paths", "agyDir"),
     ("paths", "claudeDir"),
     ("paths", "backupsDir"),
+    # opencode runs with --auto against this server, so the URL decides what it does
+    ("paths", "llmBaseUrl"),
     ("terminal", "shell"),
     ("terminal", "askApprovalBeforeRun"),
     ("terminal", "readOnlyAllowlist"),
@@ -205,6 +207,8 @@ PROTECTED_PATHS = (
     ("failover",),
     ("backups",),
     ("repoSync",),
+    # which programs the orchestrator terminals run, with permission checks skipped
+    ("orchTerminal",),
 )
 
 

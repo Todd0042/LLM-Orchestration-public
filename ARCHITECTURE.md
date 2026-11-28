@@ -37,11 +37,12 @@ Modules:
 | `nodes.py` | peer registry, health (multi-URL), local capability profile |
 | `llm.py` | model routing (explicit fallback with reason), completions, GPU turns via gpu-scheduler |
 | `agents.py` | AGY/Claude dispatch: local or peer, path mapping between machines, timeouts, never silent fallback |
-| `orchestrator.py` | the orchestrator turn (tool loop) and peer relay, run as jobs |
+| `orch_terminal.py` | the agent terminals: tmux sessions per repo, the baton, branch hooks, handoff, merge (§4) |
+| `orchestrator.py` | the old chat turn (tool loop), the shared tool layer and briefing, peer relay |
 | `repo_ops.py` / `repo_sync.py` | non-destructive git primitives / handoff engine, preflight, active device |
 | `replication.py` | two-way replication of conversations, repo activity and the vault |
 | `monitor.py` | watchdog, phone alerts (ntfy), SQLite backups to the other node, failover controller |
-| `routes/*` | HTTP routes per area (auth, system, repos, chats, terminal, ops, internal) |
+| `routes/*` | HTTP routes per area (auth, system, repos, chats, terminal, orch-terminal, ops, internal) |
 | `cli_agents.py`, `history_readers.py`, `pty_runner.py`, `gpu_and_media.py`, `orch_tools.py`, `mcp_bridge.py` | CLI runners, session readers, PTY + sudo askpass, ComfyUI, tool schemas, MCP stdio bridge |
 | `plugins/` | Optional plugins: each module with `build(ctx)` and `FEATURE` is loaded at start-up and listed at `GET /api/features`; the UI shows a plugin (`src/plugins/<id>/`) only when its server side loaded |
 
@@ -59,8 +60,13 @@ Database: `~/.local/share/llm-orchestration/orchestration.db` (0600), versioned 
 - **The node token stays between machines:** never sent to browsers, never in URLs (WebSocket uses one-time
   tickets, media uses signed expiring links), not accepted over the tunnel, rotatable
   (`POST /api/admin/rotate-token`, local only, pushes to peers).
-- **Protected settings** (auth, security, node, peers, tools dir, CLI permission flags, shell, approvals,
-  services, failover, backups) change only from the machine itself or a peer machine.
+- **Protected settings** (auth, security, node, peers, tools dir, model server URL, CLI permission flags,
+  shell, approvals, services, failover, backups, the agent terminals' commands) change only from the machine
+  itself or a peer machine.
+- **Agent terminals are watch-only over the tunnel:** starting, typing, handing off and merging are refused
+  there, and the browser's `tmux attach` is read-only (`-r`). Drive Claude remotely through its Remote
+  Control instead, which uses your Anthropic login. Every terminal connection is in the activity log with
+  its zone and whether it could type.
 - **File reads** are limited to the repo dir, vault, artifacts, AGY/Claude session dirs and backups
   (symlinks resolved first).
 - **Model-chosen shell commands** need an Approve/Deny click unless they're a single read-only command
@@ -69,7 +75,52 @@ Database: `~/.local/share/llm-orchestration/orchestration.db` (0600), versioned 
 - **Activity log** (`/api/audit`, Hub → Activity Log): logins, terminal commands, agent turns, approvals,
   settings changes, handoffs, restarts, alerts, with the zone they came from.
 
-## 4. Repo sync (the reason this exists)
+## 4. Agent terminals (the orchestrator card)
+
+The orchestrator is **three real terminals per repo**, so you see everything an agent does (tool calls,
+"Compacting conversation…", `/context`) instead of a summary of it:
+
+| Slot | Runs | Busy / idle from |
+|---|---|---|
+| **Claude** | `claude --dangerously-skip-permissions --remote-control <node>-<repo> --session-id <uuid> --settings <hooks> --mcp-config <orch tools> --append-system-prompt-file <briefing>` | its `SessionStart` / `UserPromptSubmit` / `Stop` hooks, which post to `/api/orch-terminal/hook` with a per-card secret; an interrupt from the card, or a still screen for `claudeStaleBusySec`, also counts as idle (Claude fires no hook when interrupted) |
+| **AGY** | `agy --dangerously-skip-permissions` | the screen: busy while its newest 15 lines keep changing (`orchTerminal.idleAfterSec`) |
+| **Local** | `opencode --auto` (`--standalone` on opencode 2.x) with its own `OPENCODE_CONFIG`: this machine's model server and model, the orch tools over MCP | the screen, like AGY |
+
+Implementation: `server/orch_terminal.py` (`OrchTerminals`, `Tmux`, `AttachedTerminal`),
+`server/routes/orch_terminal_routes.py`, UI in `src/components/orch/`.
+
+- **tmux, on its own socket** (`<data>/runtime/orch-tmux.sock`, config `orch-tmux.conf`, no prefix key,
+  `remain-on-exit`): the agents keep running when the browser closes or this server restarts. The first
+  session starts the tmux server under `systemd-run --user --scope` so restarting
+  `llm-orchestration.service` doesn't kill it (`orchTerminal.detachWithSystemd`). Attach from a real
+  terminal with `tmux -S <socket> attach -t orch-<card>-<slot>`, or the card's "Open in Alacritty".
+- **Browser view:** `/ws/orch-terminal/{card}/{slot}?ticket=…` runs its own `tmux attach` in a PTY per
+  browser; screen bytes go down, `{"t":"i"}` keystrokes and `{"t":"r"}` resizes go up. xterm.js is loaded
+  only when a terminal is shown. An ended agent shows Resume / New session, never a bare shell.
+- **The baton** (`orch_cards.holder`): only the holder's terminal takes typing; the server drops keystrokes
+  for the others before they reach tmux. A handoff is refused while the holder is busy (interrupt it from
+  the card first). It asks the holder to update `.orch/context.md` (waiting for Claude's `Stop` hook or
+  the screen to go quiet), appends a line to the handoff log, copies the notes to the vault, starts the next
+  agent if needed, moves the baton, and types the handoff message into the next terminal where you can see
+  it. If the holder is out of usage, the notes update is skipped and the log says why.
+- **Out of usage:** a usage-limit message on an agent's screen marks it out until the reset time it states
+  (and in `AgentAvailability`, which the old chat uses). The card offers a handoff; it never makes one.
+- **Branch-only work:** opening a card switches the repo to `orchestrator-modified` (refused if the
+  working tree is dirty). The agents' environment sets `GIT_CONFIG_COUNT/KEY_0/VALUE_0` so their git uses
+  `<data>/runtime/orch-git-hooks`: `pre-commit` and `pre-merge-commit` refuse any other branch, `pre-push`
+  refuses any other ref, and every hook then runs the repo's own hook (`core.hooksPath` or `.git/hooks`).
+  Your own terminals are unaffected. `--no-verify` would get past it, so main can also be protected on
+  GitHub (the card's button; public repos only on GitHub's free plan, admins can still push).
+- **Merge to main** (the card's button, refused while an agent is busy): archives the notes to
+  `LLM-Vault/orchestrator/<repo>/archive/`, merges with `--no-ff` leaving `.orch/` out of main, pushes main,
+  deletes the branch (locally and on GitHub) and recreates it from the new main with fresh notes.
+- **Shared notes:** `.orch/context.md` (Goal · Branch · Done so far · Decisions · Next steps · Handoff log)
+  lives on the branch; `LLM-Vault/orchestrator/<repo>/context.md` is a read-only copy for the other machine.
+
+The previous chat orchestrator (`orchestrator.py`'s turn loop) is still one tab away ("Old chat") until it's
+removed; its tool layer (`call_tool`, approvals, `briefing()`) is shared with the terminals.
+
+## 5. Repo sync (the reason this exists)
 
 - `repo_activity` = the **active device** per repo (replicated).
 - **Preflight** runs before work starts in a repo: every agent turn, every UI terminal command in a repo,
@@ -89,7 +140,7 @@ Database: `~/.local/share/llm-orchestration/orchestration.db` (0600), versioned 
 - Hub → **Repo Sync** shows every repo on every machine, the active device, recent handoffs, and a one-click
   "bring work to …".
 
-## 5. One conversation on both machines
+## 6. One conversation on both machines
 
 Every node pulls from every online peer: `chats`, `messages`, `artifacts`, `repo_activity` by a local
 change counter (`seq`, maintained by triggers), so no clocks are trusted for ordering. Messages are
@@ -100,14 +151,14 @@ The **vault** syncs both ways with a three-way compare against the last-agreed h
 deletions propagate, both-sided edits keep the newer file and save the other as
 `name.conflict-<node>-<hash8>.ext` (identical on both machines).
 
-## 6. GPU sharing (optional)
+## 7. GPU sharing (optional)
 
 If several apps share one GPU, model calls can take turns through a separate GPU-scheduler service
 (`paths.gpuSchedulerUrl`, `LLM_ORCH_USE_GPU_SCHEDULER=1`): each call asks for a turn
 (`needs=ollama:<model>`, app `llm_orchestration`) and releases it afterwards. Without a scheduler
 (the default for new installs) model calls go straight to the model server.
 
-## 7. Sites: watchdog, alerts, backups, failover
+## 8. Sites: watchdog, alerts, backups, failover
 
 - `settings.services` is the one list of sites/services (see `deploy/examples/services.example.json` and its field guide).
 - Watchdog: check every 30 s; restart only after 3
@@ -121,19 +172,19 @@ If several apps share one GPU, model calls can take turns through a separate GPU
   (second connectors for both tunnels: sites show the "back soon" page, the orchestrator stays reachable);
   stop it once the desktop has been back for 3 min.
 
-## 8. Clients
+## 9. Clients
 
 - Web UI (Vite/React) served by the daemon; Tauri app embeds `dist/` and talks to the hub with the token
   from `~/.config/llm-orchestration/node_token` (CSP set in `tauri.conf.json`).
 - Long work (turns, agent runs, handoffs) are **jobs**: the request returns a `jobId`; progress streams over
   `/ws/events`; `GET /api/jobs/{id}` for state.
 
-## 9. Files
+## 10. Files
 
 | What | Where |
 |---|---|
 | Settings / node token | `~/.config/llm-orchestration/settings.json` (0600), `node_token` (0600) |
-| DB, artifacts, runtime | `~/.local/share/llm-orchestration/` |
+| DB, artifacts, runtime | `~/.local/share/llm-orchestration/` (agent terminals: `runtime/orch-tmux.sock`, `orch-git-hooks/`) |
 | TOTP secret | `<auth.totpStateDir>/totp_secret`, default `~/.local/share/llm-orchestration/totp_secret` (created by `scripts/new-totp.py`) |
 | Vault | `~/LLM-Vault/` (both machines, synced) |
 | Backups | `~/Backups/llm-orchestration/` (on the receiving machine; `paths.backupsDir`) |

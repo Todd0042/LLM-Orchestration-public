@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ChatList } from "@/components/chat/ChatList";
-import { ConversationView } from "@/components/chat/ConversationView";
+import { OrchestratorView } from "@/components/orch/OrchestratorView";
 import { SessionView } from "@/components/chat/SessionView";
 import { ArtifactsAndViewer } from "@/components/ArtifactsAndViewer";
 import { MoreView } from "@/components/ops/MoreView";
@@ -50,7 +50,7 @@ export function Shell() {
             </Panel>
             <PanelResizeHandle className="w-1 hover:bg-sky-500/40 transition-colors" style={{ backgroundColor: "var(--border-subtle)" }} />
             <Panel defaultSize={46} minSize={30}>
-              <ConversationView wide />
+              <OrchestratorView wide />
             </Panel>
             <PanelResizeHandle className="w-1 hover:bg-sky-500/40 transition-colors" style={{ backgroundColor: "var(--border-subtle)" }} />
             <Panel defaultSize={34} minSize={22}>
@@ -59,7 +59,7 @@ export function Shell() {
           </PanelGroup>
         ) : (
           <div className="h-full min-h-0">
-            {view === "chat" && <ConversationView wide={false} />}
+            {view === "chat" && <OrchestratorView wide={false} />}
             {view === "sessions" && (session ? <SessionView onBack={closeSession} /> : <ChatList mode="sessions" />)}
             {view === "repos" && <div className="h-full overflow-y-auto"><ReposView /></div>}
             {view === "sites" && <div className="h-full overflow-y-auto"><SitesView /></div>}

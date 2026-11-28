@@ -23,17 +23,6 @@ class AgentUnavailable(RuntimeError):
     pass
 
 
-def map_path(path: str, from_root: str, to_root: str) -> str:
-    """Translate a path under one node's GitHub dir to the same repo path under another's."""
-    if not path or not from_root or not to_root:
-        return path
-    try:
-        rel = Path(path).expanduser().resolve().relative_to(Path(from_root).expanduser().resolve())
-    except (ValueError, OSError):
-        return path
-    return str(Path(to_root) / rel)
-
-
 class AgentDispatcher:
     def __init__(
         self,
@@ -56,11 +45,6 @@ class AgentDispatcher:
 
     def github_dir(self) -> str:
         return str(self.get_settings()["paths"].get("githubDir") or "")
-
-    def peer_github_dir(self, pid: str) -> str:
-        prof = self.nodes.profiles.get(pid) or {}
-        peer = self.nodes.peer(pid) or {}
-        return str(prof.get("githubDir") or peer.get("githubDir") or "")
 
     def mcp_config_path(self) -> str:
         port = int(self.get_settings()["node"].get("port", 8790))
@@ -121,12 +105,7 @@ class AgentDispatcher:
         """Run on `target`. If it's offline: on_offline='fail' raises, 'local' runs here with a visible note."""
         if self.nodes.is_local(target):
             return await self.run_local(agent, prompt, cwd=cwd, **kw)
-        if cwd and not self.peer_github_dir(target):
-            try:  # profiles refresh once a minute; don't guess paths before the first one arrives
-                self.nodes.profiles[target] = await self.nodes.json(target, "GET", "/api/node/profile", timeout=10.0)
-            except Exception:
-                pass
-        remote_cwd = map_path(cwd, self.github_dir(), self.peer_github_dir(target)) if cwd else ""
+        remote_cwd = await self.nodes.path_for_peer(target, cwd)
         try:
             r = await self.nodes.request(
                 target, "POST", "/api/internal/agent_turn",

@@ -15,11 +15,15 @@ def main() -> None:
     c = Cluster()
     site = StatusServer(200)
     c.configure(desktop_extra={"services": [{"id": "notes-app", "name": "Notes App", "node": "desktop", "health": {"url": site.url},
-                                             "publicHost": "notes.example.com"}]})
+                                             "publicHost": "notes.example.com"}],
+                               "orchTerminal": {"detachWithSystemd": False, "localModel": "qwen3-8b",
+                                                "interruptKeys": {"agy": ["C-c"], "local": ["C-c"]}}})
     d_repo, l_repo = c.make_repo("webapp")
+    agents_repo, _ = c.make_repo("agentsrepo")  # its own repo: other tests leave uncommitted work in webapp
     c.start()
     print(json.dumps({"desktop": c.desktop.url, "tunnel": c.desktop.tunnel, "laptop": c.laptop.url, "totpSecret": TOTP_SECRET,
-                      "desktopRepo": str(d_repo), "laptopRepo": str(l_repo), "tmp": str(c.tmp)}), flush=True)
+                      "desktopRepo": str(d_repo), "laptopRepo": str(l_repo), "tmp": str(c.tmp),
+                      "agentsRepo": str(agents_repo), "desktopState": str(c.desktop.state)}), flush=True)
     try:
         sys.stdin.read()
     finally:

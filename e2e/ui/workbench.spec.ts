@@ -45,9 +45,16 @@ test.beforeAll(async () => {
   });
 });
 
+// The orchestrator pane opens on the agent terminals (e2e/ui/agents.spec.ts); these tests cover
+// the old chat, which stays one tab away until the switch-over.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("orch.mode", "chat"));
+});
+
 test.afterAll(async () => {
   proc?.stdin.end();
-  await new Promise((r) => setTimeout(r, 3000));
+  // wait for the cluster to shut down (it ends its tmux terminals first), up to 30 s
+  await new Promise((r) => { proc?.once("exit", r); setTimeout(r, 30_000); });
 });
 
 test.describe("wide screen", () => {

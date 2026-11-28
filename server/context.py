@@ -22,6 +22,7 @@ from .inventory_sync import enqueue_intermission_event, scan_local_repos
 from .llm import GpuTurns, LlmRouter
 from .monitor import Alerts, BackupManager, FailoverController, ServiceMonitor
 from .nodes import NodeRegistry, PeerOffline, local_profile
+from .orch_terminal import OrchTerminals
 from .orchestrator import Orchestrator
 from .pty_runner import TerminalManager
 from .replication import Replicator
@@ -70,6 +71,7 @@ class AppContext:
                                       config_dir=cfg_dir, on_local_turn=self._on_local_turn, audit=self.audit)
         self.repo_sync = RepoSync(self)
         self.orchestrator = Orchestrator(self)
+        self.orch_terminals = OrchTerminals(self)
         self.replicator = Replicator(self)
         self.monitor = ServiceMonitor(self)
         self.backups = BackupManager(self)
@@ -207,6 +209,7 @@ class AppContext:
             self._loop("failover", 20.0, self.failover.tick)
             self._loop("repo_scan", 120.0, self.rescan_repos)
             self._loop("repo_tracker", 1500.0, self.rescan_tracker)
+            self._loop("orch_terminal_watch", 1.5, self.orch_terminals.watch)
 
     async def stop(self) -> None:
         for t in self._loops:
